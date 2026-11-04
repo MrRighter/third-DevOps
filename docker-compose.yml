@@ -1,0 +1,59 @@
+services:
+  app:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: app-backend:1.0.0        # осмысленный тег, не latest
+    container_name: app
+    ports:
+    # пробрасываем порт наружу, чтобы приложение было доступно с хоста
+      - "3000:3000"
+    environment:
+      HTTP_PORT: "3000"
+      STATIC_DIR: /app/static
+      # внутри сети compose контейнеры видят друг друга по имени сервиса (db)
+      # берём конфиденциальные данные из .env файла
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_USER: ${DB_USER:-app_user}
+      DB_PASSWORD: ${DB_PASSWORD:-secure_password}
+      DB_NAME: ${DB_NAME:-myapp}
+    volumes:
+      - ./frontend:/app/static:ro   # read-only монтирование фронта
+    depends_on:
+      db:
+        condition: service_healthy  # ждём готовности БД
+    restart: unless-stopped
+    networks:
+      - app_net
+
+  db:
+    image: postgres:16-alpine
+    container_name: app-db
+    environment:
+      POSTGRES_USER: ${DB_USER:-app_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secure_password}
+      POSTGRES_DB: ${DB_NAME:-myapp}
+    healthcheck:
+    # проверяет готова ли бд принимать подключение
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-app_user} -d ${DB_NAME:-myapp}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    volumes:
+    # инструкция для сохранения данных бд при перезагрузки контейнера
+      - db_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    restart: unless-stopped
+    networks:
+      - app_net
+    # порт 5432 НЕ пробрасываем наружу — БД доступна только внутри сети
+
+volumes:
+  db_data:
+
+networks:
+# создаём изолированную сеть, чтобы приложение общалось само с собой, но не было доступно другим контейнерам на хосте
+  app_net:
+    driver: bridge
